@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-DamaphAcademy - Ethiopian Student Study Helper Telegram Bot
-A comprehensive bot designed to help Ethiopian students with their studies
+DamaphAcademy - Enhanced Ethiopian Student Study Helper Telegram Bot
+Now with AI-powered features using Google Gemini via DamaphAI
 """
 
 import os
@@ -9,7 +9,8 @@ import logging
 import random
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
+from damaph_ai import get_ai_instance
 
 # Load environment variables
 load_dotenv()
@@ -26,6 +27,12 @@ BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 
 if not BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN not found in environment variables")
+
+# Get AI instance
+ai = get_ai_instance()
+
+# Conversation states
+ASKING_QUESTION, ASKING_HOMEWORK, ASKING_CONCEPT, ASKING_ESSAY = range(4)
 
 # Study resources database
 STUDY_RESOURCES = {
@@ -56,7 +63,7 @@ STUDY_RESOURCES = {
     }
 }
 
-# Motivational quotes in English and Amharic
+# Motivational quotes
 MOTIVATIONAL_QUOTES = [
     '🌟 "Education is not the filling of a pail, but the lighting of a fire." - William Butler Yeats',
     '💪 "Success is no accident. It is hard work, perseverance, learning, studying, sacrifice and most of all, love of what you are doing."',
@@ -71,73 +78,49 @@ MOTIVATIONAL_QUOTES = [
 STUDY_TIPS = """
 **🎯 Best Study Tips for Success:**
 
-1. **Set Clear Goals**
-   - Know exactly what you need to study each day
-
-2. **Use the Pomodoro Technique**
-   - Study for 25 minutes, then take a 5-minute break
-   - Repeat 4 times, then take a longer break
-
-3. **Get Good Sleep**
-   - Sleep at least 8 hours every night
-   - A rested mind learns better
-
-4. **Take Active Notes**
-   - Don't just highlight - write in your own words
-   - Summarize key points
-
-5. **Study in Groups**
-   - Learn from classmates
-   - Teach others to reinforce your knowledge
-
-6. **Practice Regularly**
-   - Do exercises and past papers
-   - Practice makes perfect!
-
-7. **Stay Healthy**
-   - Eat nutritious food
-   - Exercise regularly
-   - Stay hydrated
-
-8. **Minimize Distractions**
-   - Turn off your phone
-   - Find a quiet place to study
-   - Focus completely on your work
-
-9. **Review Regularly**
-   - Don't just cram before exams
-   - Review material weekly
-
-10. **Stay Positive**
-    - Believe in yourself
-    - Celebrate small victories
-    - Don't give up!
+1. **Set Clear Goals** - Know exactly what you need to study each day
+2. **Use Pomodoro Technique** - Study 25 min, rest 5 min
+3. **Get Good Sleep** - Sleep at least 8 hours every night
+4. **Take Active Notes** - Write in your own words
+5. **Study in Groups** - Learn from classmates
+6. **Practice Regularly** - Do exercises and past papers
+7. **Stay Healthy** - Eat nutritious food and exercise
+8. **Minimize Distractions** - Turn off your phone
+9. **Review Regularly** - Don't just cram before exams
+10. **Stay Positive** - Believe in yourself!
 """
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /start is issued."""
     user = update.effective_user
     welcome_message = f"""
-🎓 **Welcome to DamaphAcademy!** 🎓
+🎓 **Welcome to DamaphAcademy with AI!** 🎓
 
 Hello {user.first_name}! 👋
 
-I'm **DamaphAcademy**, your personal study helper bot!
-I'm here to help you succeed in your studies with resources, tips, and motivation.
+I'm **DamaphAcademy**, your AI-powered study helper bot!
+Now enhanced with **DamaphAI** for intelligent homework help, Q&A, and more!
 
 **What I can help you with:**
 📚 Study Resources - Organized by subject
 💡 Study Tips - Proven learning techniques
 ⏰ Study Schedules - Time management plans
 🏆 Motivation - Daily encouragement
-🎯 Subject Help - Math, Science, English, Amharic, History
+🤖 **AI Features:**
+   • Ask homework questions
+   • Get concept explanations
+   • Review your essays
+   • Generate study guides
 
 **Try these commands:**
 /help - See all available commands
 /subjects - Browse study subjects
-/motivation - Get motivated!
-/tips - Learn study techniques
+/ask - Ask DamaphAI any question
+/homework - Get homework help
+/explain - Understand concepts
+/essay - Get essay feedback
 /schedule - Get a study plan
+/motivation - Get motivated!
 """
     await update.message.reply_text(welcome_message, parse_mode='Markdown')
 
@@ -146,13 +129,20 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     help_text = """
 **DamaphAcademy Commands:**
 
-**Main Commands:**
+**📚 Study Commands:**
 /start - Start the bot
 /help - Show this help message
 /subjects - Browse all study subjects
-/motivation - Get motivational quotes
 /tips - Learn study techniques
 /schedule - Get a study plan
+/motivation - Get motivational quotes
+
+**🤖 AI Commands:**
+/ask - Ask DamaphAI any question
+/homework - Get homework help (step-by-step)
+/explain - Understand a concept
+/essay - Get essay feedback & improvement
+/guide - Generate a study guide
 
 **Subject Commands:**
 /math - Mathematics resources
@@ -212,6 +202,149 @@ async def subject_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     else:
         await query.edit_message_text(text="Subject not found.")
 
+async def ask_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start conversation to ask DamaphAI a question."""
+    await update.message.reply_text(
+        "🤖 **Ask DamaphAI Anything!**\n\n"
+        "What would you like to ask? "
+        "(You can ask about any subject - Math, Science, English, Amharic, History, etc.)\n\n"
+        "Type /cancel to stop.",
+        parse_mode='Markdown'
+    )
+    return ASKING_QUESTION
+
+async def process_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Process the user's question with AI."""
+    question = update.message.text
+    
+    # Show loading message
+    loading_msg = await update.message.reply_text("🤖 DamaphAI is thinking... ⏳")
+    
+    try:
+        # Get AI response
+        response = ai.answer_question(question, subject="General")
+        
+        # Send response
+        await update.message.reply_text(f"🤖 **DamaphAI Response:**\n\n{response}", parse_mode='Markdown')
+        
+        await loading_msg.delete()
+        await update.message.reply_text("Ask another question with /ask or type /help for more options!")
+        
+        return ConversationHandler.END
+        
+    except Exception as e:
+        await loading_msg.delete()
+        await update.message.reply_text(f"❌ Error: {str(e)[:100]}")
+        return ConversationHandler.END
+
+async def homework_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start conversation for homework help."""
+    await update.message.reply_text(
+        "📝 **Homework Help from DamaphAI**\n\n"
+        "Send me your homework problem and I'll help you solve it step-by-step!\n\n"
+        "Type /cancel to stop.",
+        parse_mode='Markdown'
+    )
+    return ASKING_HOMEWORK
+
+async def process_homework(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Process homework problem with AI."""
+    problem = update.message.text
+    
+    # Show loading message
+    loading_msg = await update.message.reply_text("🤖 Analyzing your homework... ⏳")
+    
+    try:
+        # Get AI response
+        response = ai.solve_homework(problem, subject="General", level="high school")
+        
+        # Send response
+        await update.message.reply_text(f"📝 **Solution:**\n\n{response}", parse_mode='Markdown')
+        
+        await loading_msg.delete()
+        await update.message.reply_text("Need help with another problem? Send /homework")
+        
+        return ConversationHandler.END
+        
+    except Exception as e:
+        await loading_msg.delete()
+        await update.message.reply_text(f"❌ Error: {str(e)[:100]}")
+        return ConversationHandler.END
+
+async def explain_concept(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start conversation for concept explanation."""
+    await update.message.reply_text(
+        "💡 **Concept Explanation**\n\n"
+        "What concept would you like me to explain? "
+        "(e.g., 'Photosynthesis', 'Quadratic equations', 'French Revolution')\n\n"
+        "Type /cancel to stop.",
+        parse_mode='Markdown'
+    )
+    return ASKING_CONCEPT
+
+async def process_concept(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Process concept explanation with AI."""
+    concept = update.message.text
+    
+    # Show loading message
+    loading_msg = await update.message.reply_text("🤖 Explaining concept... ⏳")
+    
+    try:
+        # Get AI response
+        response = ai.explain_concept(concept, subject="General", detail_level="medium")
+        
+        # Send response
+        await update.message.reply_text(f"💡 **Explanation:**\n\n{response}", parse_mode='Markdown')
+        
+        await loading_msg.delete()
+        await update.message.reply_text("Need another explanation? Send /explain")
+        
+        return ConversationHandler.END
+        
+    except Exception as e:
+        await loading_msg.delete()
+        await update.message.reply_text(f"❌ Error: {str(e)[:100]}")
+        return ConversationHandler.END
+
+async def essay_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Start conversation for essay review."""
+    await update.message.reply_text(
+        "✍️ **Essay Review**\n\n"
+        "Send me your essay and I'll provide feedback on grammar, structure, and content!\n\n"
+        "Type /cancel to stop.",
+        parse_mode='Markdown'
+    )
+    return ASKING_ESSAY
+
+async def process_essay(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Process essay with AI."""
+    essay = update.message.text
+    
+    # Show loading message
+    loading_msg = await update.message.reply_text("🤖 Reviewing your essay... ⏳")
+    
+    try:
+        # Get AI response
+        response = ai.check_and_improve_essay(essay, subject="General")
+        
+        # Send response
+        await update.message.reply_text(f"✍️ **Feedback:**\n\n{response}", parse_mode='Markdown')
+        
+        await loading_msg.delete()
+        await update.message.reply_text("Need another review? Send /essay")
+        
+        return ConversationHandler.END
+        
+    except Exception as e:
+        await loading_msg.delete()
+        await update.message.reply_text(f"❌ Error: {str(e)[:100]}")
+        return ConversationHandler.END
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancel conversation."""
+    await update.message.reply_text("❌ Cancelled. How can I help you? /help")
+    return ConversationHandler.END
+
 async def motivation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a motivational quote."""
     quote = random.choice(MOTIVATIONAL_QUOTES)
@@ -240,14 +373,12 @@ async def schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 **Tips for Success:**
 ✅ Adjust this schedule to fit your needs
-✅ Don't overload yourself - quality over quantity
+✅ Don't overload yourself
 ✅ Take breaks every 25-30 minutes
-✅ Stay consistent with your routine
+✅ Stay consistent
 ✅ Get enough sleep
-✅ Eat healthy food
-✅ Exercise regularly
 
-Remember: *Consistency is key to success!* 🎯
+*Consistency is key to success!* 🎯
 """
     await update.message.reply_text(schedule_text, parse_mode='Markdown')
 
@@ -263,6 +394,7 @@ Try using these commands:
 /help - See all available commands
 📚 /subjects - Browse study materials
 💡 /tips - Get study advice
+🤖 /ask - Ask DamaphAI
 🎓 /motivation - Get motivated
 📅 /schedule - Get a study plan
 """
@@ -287,15 +419,53 @@ def main() -> None:
     application.add_handler(CommandHandler("english", subjects))
     application.add_handler(CommandHandler("amharic", subjects))
     application.add_handler(CommandHandler("history", subjects))
+    
+    # AI conversation handlers
+    ask_handler = ConversationHandler(
+        entry_points=[CommandHandler("ask", ask_question)],
+        states={
+            ASKING_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_question)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
+    
+    homework_handler = ConversationHandler(
+        entry_points=[CommandHandler("homework", homework_help)],
+        states={
+            ASKING_HOMEWORK: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_homework)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
+    
+    concept_handler = ConversationHandler(
+        entry_points=[CommandHandler("explain", explain_concept)],
+        states={
+            ASKING_CONCEPT: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_concept)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
+    
+    essay_handler = ConversationHandler(
+        entry_points=[CommandHandler("essay", essay_feedback)],
+        states={
+            ASKING_ESSAY: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_essay)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
+    
+    application.add_handler(ask_handler)
+    application.add_handler(homework_handler)
+    application.add_handler(concept_handler)
+    application.add_handler(essay_handler)
 
     # Handle button callbacks and messages
     application.add_handler(CallbackQueryHandler(subject_button))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
 
     # Run the bot
-    logger.info("DamaphAcademy Bot is running...")
+    logger.info("DamaphAcademy Bot with AI is running...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
-    logger.info("Starting DamaphAcademy Telegram Bot...")
+    logger.info("Starting DamaphAcademy Enhanced Bot with DamaphAI...")
     main()
